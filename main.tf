@@ -1,42 +1,44 @@
 # assumed resources that already exist:
 # - vpc (set as default)
 # - subnet in the VPC matching CIDR given https://us-west-1.console.aws.amazon.com/vpc/home?region=us-west-1#subnets
-# - key pair https://us-west-1.console.aws.amazon.com/ec2/v2/home?region=us-west-1#KeyPairs
 # - vpc security group, allowing only 22 & 8080 to your home IP 'curl ipinfo.io/ip' https://us-west-1.console.aws.amazon.com/ec2/v2/home?region=us-west-1#SecurityGroups:
-# - ubuntu image from cannonical 
+# - ubuntu image
+# - an ssh key in your agent that matches the public key given
 locals {
-    instance_type = "t2.medium"
-    key_name = "matttrach-initial"
-    name = "mt-k3s-default"
-    user = "matttrach"
-    use = "onboarding"
-    security_group = "sg-06bf73fa3affae222"
-    vpc = "vpc-3d1f335a"
-    subnet = "subnet-0835c74adb9e4a860"
-    ami = "ami-01f87c43e618bf8f0"
-    servers = toset(["k3s-etcd-k0","k3s-etcd-k1","k3s-etcd-k2","k3s-etcd-e0"])
-    agents = toset(["k3s-etcd-k1","k3s-etcd-k2"])
-}
-
-data "aws_vpc" "selected" {
-  default = true
-}
+    instance_type   = "t2.medium"
+    user            = "matttrach"
+    use             = "onboarding"
+    security_group  = "sg-06bf73fa3affae222"
+    vpc             = "vpc-3d1f335a"
+    subnet          = "subnet-0835c74adb9e4a860"
+    ami             = "ami-01f87c43e618bf8f0"
+    names           = ["k3s0","k3s1","k3s2"]
+    nodes           = toset(local.names)
+    # public ssh key, BEWARE! changing this will destroy the servers!
+    sshkey          = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGbArPa8DHRkmnIx+2kT/EVmdN1cORPCDYF2XVwYGTsp matt.trachier@suse.com"
+ }
 
 resource "random_uuid" "cluster_token" {
 }
 
 resource "aws_instance" "k3s" {
-  for_each               = local.servers
-  ami                    = local.ami
-  instance_type          = local.instance_type
-  vpc_security_group_ids = [local.security_group]
-  subnet_id              = local.subnet
-  key_name               = local.key_name
-  instance_initiated_shutdown_behavior = "terminate"
+  for_each                    = local.nodes
+  ami                         = local.ami
+  instance_type               = local.instance_type
+  vpc_security_group_ids      = [local.security_group]
+  subnet_id                   = local.subnet
   associate_public_ip_address = true
+  instance_initiated_shutdown_behavior = "terminate"
   user_data = <<-EOT
   #cloud-config
   disable_root: false
+  users:
+    - name: ${local.user}
+      gecos: ${local.user}
+      sudo: ALL=(ALL) NOPASSWD:ALL
+      groups: users, admin
+      ssh_authorized_keys:
+        - ${local.sshkey}
   EOT
 
   tags = {
@@ -47,8 +49,8 @@ resource "aws_instance" "k3s" {
 
   connection {
     type        = "ssh"
-    user        = "root"
-    script_path = "/usr/local/bin/initial"
+    user        = local.user
+    script_path = "/home/${local.user}/initial"
     agent       = true
     host        = self.public_ip
   }
@@ -56,10 +58,10 @@ resource "aws_instance" "k3s" {
   provisioner "remote-exec" {
     inline = [<<-EOT
       max_attempts=15
-      interval=5
       attempts=0
-      while [ "$(cloud-init status)" != "status: done" ]; do
-        echo "cloud init is \"$(cloud-init status)\""
+      interval=5
+      while [ "$(sudo cloud-init status)" != "status: done" ]; do
+        echo "cloud init is \"$(sudo cloud-init status)\""
         attempts=$(expr $attempts + 1)
         if [ $attempts = $max_attempts ]; then break; fi
         sleep $interval;
@@ -69,128 +71,70 @@ resource "aws_instance" "k3s" {
   }
 }
 
-resource "null_resource" "start_etcd" {
+resource "null_resource" "bootstrap" {
   depends_on = [
     aws_instance.k3s,
   ]
-
+  for_each = toset([local.names[0]])
   connection {
     type        = "ssh"
-    user        = "root"
-    script_path = "/usr/local/bin/start_etcd"
+    user        = local.user
+    script_path = "/home/${local.user}/tfbootstrap"
     agent       = true
-    host        = aws_instance.k3s["k3s-etcd-e0"].public_ip
+    host        = aws_instance.k3s[each.key].public_ip
   }
 
   provisioner "remote-exec" {
     inline = [<<-EOT
-      apt update
-      ETCD_VER=v3.4.18
-
-      if [ -z $(which etcd) ]; then
-        rm -f /tmp/etcd-$ETCD_VER-linux-amd64.tar.gz
-        rm -rf /tmp/etcd-download-test && mkdir -p /tmp/etcd-download-test
-
-        GOOGLE_URL=https://storage.googleapis.com/etcd
-        curl -L $GOOGLE_URL/$ETCD_VER/etcd-$ETCD_VER-linux-amd64.tar.gz -o /tmp/etcd-$ETCD_VER-linux-amd64.tar.gz
-        tar xzvf /tmp/etcd-$ETCD_VER-linux-amd64.tar.gz -C /tmp/etcd-download-test --strip-components=1
-        rm -f /tmp/etcd-$ETCD_VER-linux-amd64.tar.gz
-
-        mv /tmp/etcd-download-test/etcd /usr/bin/etcd
-        mv /tmp/etcd-download-test/etcdctl /usr/bin/etcdctl
-      fi
-
-      etcd --version
-      etcdctl version
-
-      etcd & 
-      sleep 5
-      etcdctl --endpoints="http://$HOST:2379" put foo "HelloWorld"
-      etcdctl --endpoints="http://$HOST:2379" get foo
+      sudo curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.21.6+k3s1 INSTALL_K3S_EXEC="server --cluster-init --write-kubeconfig-mode 644 --token ${random_uuid.cluster_token.result}" sh -
+      sleep 15
+      sudo k3s kubectl get node
     EOT
     ]
   }
 }
 
-resource "null_resource" "start_server" {
+resource "null_resource" "nodes" {
   depends_on = [
     aws_instance.k3s,
-    null_resource.start_etcd,
+    null_resource.bootstrap,
   ]
-
+  for_each = toset([for n in local.names: n if n != local.names[0]])
   connection {
     type        = "ssh"
-    user        = "root"
-    script_path = "/usr/local/bin/start_server"
+    user        = local.user
+    script_path = "/home/${local.user}/tfnodes"
     agent       = true
-    host        = aws_instance.k3s["k3s-etcd-k0"].public_ip
+    host        = aws_instance.k3s[each.key].public_ip
   }
 
   provisioner "remote-exec" {
     inline = [<<-EOT
-      apt update
-      ETCD_IP=${aws_instance.k3s["k3s-etcd-e0"].public_ip}
-      curl \
-        -sfL https://get.k3s.io | \
-        K3S_TOKEN=${random_uuid.cluster_token.result} \
-        K3S_DATASTORE_ENDPOINT="http://$ETCD_IP:2379" \
-        sh -
+     
+      sudo curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.21.6+k3s1 INSTALL_K3S_EXEC="server" K3S_TOKEN=${random_uuid.cluster_token.result} K3S_URL="https://${aws_instance.k3s[local.names[0]].public_dns}:6443" sh -
+      sleep 15
     EOT
     ]
   }
 }
 
-resource "null_resource" "start_agents" {
+resource "null_resource" "validate" {
   depends_on = [
     aws_instance.k3s,
-    null_resource.start_etcd,
-    null_resource.start_server,
+    null_resource.bootstrap,
+    null_resource.nodes,
   ]
-  for_each = local.agents
   connection {
     type        = "ssh"
-    user        = "root"
-    script_path = "/usr/local/bin/start_agents"
+    user        = local.user
+    script_path = "/home/${local.user}/tfvalidate"
     agent       = true
-    host        = aws_instance.k3s["k3s-etcd-k0"].public_ip
+    host        = aws_instance.k3s["k3s0"].public_ip
   }
 
   provisioner "remote-exec" {
     inline = [<<-EOT
-      apt update
-      ETCD_IP=${aws_instance.k3s["k3s-etcd-e0"].public_ip}
-      curl \
-        -sfL https://get.k3s.io | \
-        K3S_TOKEN=${random_uuid.cluster_token.result} \
-        K3S_DATASTORE_ENDPOINT="http://$ETCD_IP:2379" \
-        K3S_URL="${aws_instance.k3s["k3s-etcd-k0"].public_ip}" \
-        INSTALL_K3S_SKIP_START=1 \
-        sh -
-      sleep 10
-    EOT
-    ]
-  }
-}
-
-resource "null_resource" "validate_status" {
-  depends_on = [
-    aws_instance.k3s,
-    null_resource.start_etcd,
-    null_resource.start_server,
-    null_resource.start_agents,
-  ]
-
-  connection {
-    type        = "ssh"
-    user        = "root"
-    script_path = "/usr/local/bin/validate_status"
-    agent       = true
-    host        = aws_instance.k3s["k3s-etcd-k0"].public_ip
-  }
-
-  provisioner "remote-exec" {
-    inline = [<<-EOT
-      kubectl get nodes
+      sudo k3s kubectl get node
     EOT
     ]
   }
