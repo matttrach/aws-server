@@ -110,7 +110,6 @@ resource "null_resource" "nodes" {
 
   provisioner "remote-exec" {
     inline = [<<-EOT
-     
       sudo curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.21.6+k3s1 INSTALL_K3S_EXEC="server" K3S_TOKEN=${random_uuid.cluster_token.result} K3S_URL="https://${aws_instance.k3s[local.names[0]].public_dns}:6443" sh -
       sleep 15
     EOT
