@@ -1,5 +1,7 @@
 #!/bin/sh
 # source this file!
+apt update
+apt install -y net-tools jq tree
 
 install -d /etc/rancher/rke2
 install -m 0644 /dev/null /etc/rancher/rke2/config.yaml
