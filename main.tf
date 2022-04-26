@@ -8,18 +8,21 @@ locals {
     instance_type   = "t2.medium"
     use             = "onboarding"
     user            = "matt"
-    admin_group     = "wheel" # "admin" for ubuntu
     security_group  = "sg-06bf73fa3affae222"
     vpc             = "vpc-3d1f335a"
     subnet          = "subnet-0835c74adb9e4a860"
-    ami             = "ami-062ef6c2900041916" # alpine x86 with cloud-init
-    initial_user    = "alpine" # this depends on the image!
+    #ami             = "ami-062ef6c2900041916" # alpine x86 with cloud-init
+    #initial_user    = "alpine" # this depends on the image!
+    #admin_group     = "wheel"
+    ami             = "ami-09e2adc587f5853ac" # Ubuntu
+    initial_user    = "ubuntu"
+    admin_group     = "admin"
     names           = ["s0"]
     servers         = toset(local.names)
     sshkey_name     = "matttrach-initial"
-    #script          = file("${path.module}/setup_user_alpine.sh")
     sshkey          = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGbArPa8DHRkmnIx+2kT/EVmdN1cORPCDYF2XVwYGTsp matt.trachier@suse.com"
- }
+    #script          = file("${path.module}/setup_user_alpine.sh")
+  }
 
 resource "random_uuid" "cluster_token" {
 }
