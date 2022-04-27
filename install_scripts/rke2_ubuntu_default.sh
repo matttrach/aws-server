@@ -1,5 +1,6 @@
 #!/bin/sh
-# source this file!
+# this script assumes you are root!
+
 apt update
 apt install -y net-tools jq tree
 
@@ -23,15 +24,16 @@ export RKE2_TOKEN="this-is-a-test-token-$(date +%F)"
 export KUBECONFIG=/etc/rancher/rke2/rke2.yaml
 alias k='kubectl'
 alias gm='watch -n 5 kubectl get node,all -A -o wide'
+alias j='journalctl -feu rke2-server'
+alias trke='tree -a -L 2 /var/lib/rancher/rke2'
+alias trkee='tree -a /etc/rancher/rke2'
 EOF
 
 . /etc/rancher/rke2/envrc
 
+if [ ! -f "~/.profile" ]; then touch ~/.profile; fi
+echo '. /etc/rancher/rke2/envrc' >> ~/.profile
+
 curl -sfL https://get.rke2.io | sh -
 
-systemctl enable --now rke2-server.service && \
-watch -n 5 kubectl get node,all -A -o wide
-
-#journalctl -feu rke2-server
-#watch -n 5 tree -a -L 2 /var/lib/rancher/rke2
-#watch -n 5 tree -a /etc/rancher/rke2
+systemctl enable --now rke2-server.service

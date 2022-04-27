@@ -21,7 +21,7 @@ locals {
     servers         = toset(local.names)
     sshkey_name     = "matttrach-initial"
     sshkey          = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGbArPa8DHRkmnIx+2kT/EVmdN1cORPCDYF2XVwYGTsp matt.trachier@suse.com"
-    #script          = file("${path.module}/setup_user_alpine.sh")
+    script          = file("${path.module}/install_scripts/rke2_ubuntu_default.sh")
   }
 
 resource "random_uuid" "cluster_token" {
@@ -99,28 +99,29 @@ resource "aws_instance" "server" {
   }
 }
 
-# resource "null_resource" "script" {
-#   depends_on = [
-#     aws_instance.server,
-#   ]
-#   for_each = local.servers
-#   connection {
-#     type        = "ssh"
-#     user        = local.user
-#     script_path = "/home/${local.user}/script_install"
-#     agent       = true
-#     host        = aws_instance.server[each.key].public_ip
-#   }
+resource "null_resource" "script" {
+  depends_on = [
+    aws_instance.server,
+  ]
+  for_each = local.servers
+  connection {
+    type        = "ssh"
+    user        = local.user
+    script_path = "/home/${local.user}/script"
+    agent       = true
+    host        = aws_instance.server[each.key].public_ip
+  }
 
-#   provisioner "file" {
-#     content = local.script
-#     destination = "/home/${local.user}/script.sh"
-#   }
+  provisioner "file" {
+    content = local.script
+    destination = "/home/${local.user}/install_script.sh"
+  }
 
-#   provisioner "remote-exec" {
-#     inline = [<<-EOT
-#       sudo /home/${local.user}/script.sh
-#     EOT
-#     ]
-#   }
-# }
+  provisioner "remote-exec" {
+    inline = [<<-EOT
+      sudo mv /home/${local.user}/install_script.sh /root/script.sh
+      sudo chmod +x /root/script.sh
+    EOT
+    ]
+  }
+}
