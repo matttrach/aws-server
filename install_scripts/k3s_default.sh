@@ -4,7 +4,7 @@
 install -d /etc/rancher/k3s
 
 cat << EOF > /etc/rancher/k3s/envrc
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/var/lib/rancher/rke2/bin:/var/lib/rancher/k3s/bin"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:/var/lib/rancher/k3s/bin"
 export TOKEN="this-is-a-test-token-$(date +%F)"
 alias k='kubectl'
 alias gm='watch -n 5 kubectl get node,all -A -o wide'
