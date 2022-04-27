@@ -24,9 +24,6 @@ locals {
     script          = file("${path.module}/install_scripts/rke2_ubuntu_default.sh")
   }
 
-resource "random_uuid" "cluster_token" {
-}
-
 resource "aws_instance" "server" {
   for_each                    = local.servers
   ami                         = local.ami
