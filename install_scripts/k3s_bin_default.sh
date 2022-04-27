@@ -9,7 +9,7 @@ export TOKEN="this-is-a-test-token-$(date +%F)"
 alias k='kubectl'
 alias gm='watch -n 5 kubectl get node,all -A -o wide'
 alias j='journalctl -feu k3s'
-alias trke='tree -a -L 3 /var/lib/rancher'
+alias trke='tree -a -L 5 -I "bin" /var/lib/rancher'
 alias trkee='tree -a /etc/rancher'
 EOF
 
@@ -18,4 +18,8 @@ EOF
 if [ ! -f "~/.profile" ]; then touch ~/.profile; fi
 echo '. /etc/rancher/k3s/envrc' >> ~/.profile
 
-curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --token $TOKEN --cluster-init" sh -
+wget https://github.com/k3s-io/k3s/releases/latest/download/k3s
+chmod +x k3s
+mv k3s /usr/bin/k3s
+ln -sf k3s /usr/bin/kubectl
+k3s server --token $TOKEN &

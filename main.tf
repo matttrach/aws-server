@@ -116,6 +116,7 @@ resource "null_resource" "script" {
 
   provisioner "remote-exec" {
     inline = [<<-EOT
+      echo 'sudo -i' >> ~/.profile
       sudo mv /home/${local.user}/install_script.sh /root/script.sh
       sudo chmod +x /root/script.sh
     EOT
