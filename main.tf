@@ -1,8 +1,8 @@
 # assumed resources that already exist:
-# - vpc (set as default)
+# - a VPC
 # - subnet in the VPC matching CIDR given https://us-west-1.console.aws.amazon.com/vpc/home?region=us-west-1#subnets
-# - vpc security group, allowing only 22 & 8080 to your home IP 'curl ipinfo.io/ip' https://us-west-1.console.aws.amazon.com/ec2/v2/home?region=us-west-1#SecurityGroups:
-# - an ssh key added to AWS
+# - vpc security group, allowing only 22 & 8080 to your home IP 'curl ipinfo.io/ip' https://us-west-1.console.aws.amazon.com/ec2/v2/home?region=us-west-1#SecurityGroups
+# - an ssh key added to AWS matching the "sshkey_name"
 # - an ssh key in your agent that matches the public key and the name given
 locals {
     instance_type   = "t2.medium"
@@ -11,18 +11,17 @@ locals {
     security_group  = "sg-06bf73fa3affae222"
     vpc             = "vpc-3d1f335a"
     subnet          = "subnet-0835c74adb9e4a860"
-    #ami             = "ami-062ef6c2900041916" # alpine x86 with cloud-init
-    #initial_user    = "alpine" # this depends on the image!
-    #admin_group     = "wheel"
-    ami             = "ami-09e2adc587f5853ac" # Ubuntu
-    initial_user    = "ubuntu"
-    admin_group     = "admin"
+    image_name      = "ubuntu-20"
+    image           = local.images[local.image_name]
+    ami             = local.image.ami
+    initial_user    = local.image.user
+    admin_group     = local.image.sugroup
     names           = ["s0"]
     servers         = toset(local.names)
     sshkey_name     = "matttrach-initial"
     sshkey          = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGbArPa8DHRkmnIx+2kT/EVmdN1cORPCDYF2XVwYGTsp matt.trachier@suse.com"
     script          = file("${path.module}/install_scripts/rke2_ubuntu_default.sh")
-  }
+}
 
 resource "aws_instance" "server" {
   for_each                    = local.servers
@@ -40,16 +39,21 @@ resource "aws_instance" "server" {
     - name: ${local.user}
       gecos: ${local.user}
       sudo: ALL=(ALL) NOPASSWD:ALL
-      groups: users, admin
+      groups: users, ${local.admin_group}
       lock_password: false
       ssh_authorized_keys:
         - ${local.sshkey}
+  package_update: true
+  packages:
+    - jq
+    - tree
   EOT
 
   tags = {
-    Name = each.key
-    User = local.user
-    Use  = local.use
+    Name  = each.key
+    User  = local.user
+    Use   = local.use
+    Owner = local.user
   }
 
   root_block_device {
