@@ -8,6 +8,7 @@ locals {
     instance_type   = "t2.medium"
     use             = "onboarding"
     user            = "matt"
+    owner           = "matttrachier"
     security_group  = "sg-06bf73fa3affae222"
     vpc             = "vpc-3d1f335a"
     subnet          = "subnet-0835c74adb9e4a860"
@@ -15,12 +16,12 @@ locals {
     image           = local.images[local.image_name]
     ami             = local.image.ami
     initial_user    = local.image.user
-    admin_group     = local.image.sugroup
-    names           = ["s0"]
+    admin_group     = local.image.group
+    names           = ["s0","s1","s2"]
     servers         = toset(local.names)
     sshkey_name     = "matttrach-initial"
     sshkey          = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGbArPa8DHRkmnIx+2kT/EVmdN1cORPCDYF2XVwYGTsp matt.trachier@suse.com"
-    script          = file("${path.module}/install_scripts/rke2_ubuntu_default.sh")
+    script          = file("${path.module}/install_scripts/rke2_bin_default.sh")
 }
 
 resource "aws_instance" "server" {
@@ -53,7 +54,7 @@ resource "aws_instance" "server" {
     Name  = each.key
     User  = local.user
     Use   = local.use
-    Owner = local.user
+    Owner = local.owner
   }
 
   root_block_device {
@@ -74,7 +75,7 @@ resource "aws_instance" "server" {
       if [ -z $(which cloud-init) ]; then 
         echo "cloud-init not found";
         # check for user, if it doesn't exist generate it
-        if [ -z $(awk -F: '{ print $1}' /etc/passwd | grep ${local.user}) ]; then 
+        if [ -z $(awk -F: '{ print $1 }' /etc/passwd | grep ${local.user}) ]; then 
           sudo addgroup ${local.user}
           sudo adduser -g "${local.user}" -s "/bin/sh" -G "${local.user}" -D ${local.user}
           sudo addgroup ${local.user} ${local.admin_group}
