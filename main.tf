@@ -1,130 +1,120 @@
 # assumed resources that already exist:
 # - a VPC
-# - subnet in the VPC matching CIDR given https://us-west-1.console.aws.amazon.com/vpc/home?region=us-west-1#subnets
-# - vpc security group, allowing only 22 & 8080 to your home IP 'curl ipinfo.io/ip' https://us-west-1.console.aws.amazon.com/ec2/v2/home?region=us-west-1#SecurityGroups
-# - an ssh key added to AWS matching the "sshkey_name"
-# - an ssh key in your agent that matches the public key and the name given
+# - an ssh key in your agent that matches the public key given
 locals {
-    instance_type   = "t2.medium"
-    use             = "onboarding"
-    user            = "matt"
-    owner           = "matttrachier"
-    security_group  = "sg-06bf73fa3affae222"
-    vpc             = "vpc-3d1f335a"
-    subnet          = "subnet-0835c74adb9e4a860"
-    image_name      = "ubuntu-20"
-    image           = local.images[local.image_name]
-    ami             = local.image.ami
-    initial_user    = local.image.user
-    admin_group     = local.image.group
-    names           = ["s0","s1","s2"]
-    servers         = toset(local.names)
-    sshkey_name     = "matttrach-initial"
-    sshkey          = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGbArPa8DHRkmnIx+2kT/EVmdN1cORPCDYF2XVwYGTsp matt.trachier@suse.com"
-    script          = file("${path.module}/install_scripts/rke2_bin_default.sh")
+  owner         = var.owner
+  vpc           = var.vpc
+  my_ip         = var.addr
+  ssh_key       = var.ssh_key
+  instance_type = "t2.medium"
+  user          = "matt"
+  internal_cidr = "172.31.101.0/24"
+  image_name    = "ubuntu-20"
+  names         = ["s0"]
+  script        = "k3s"
 }
 
-resource "aws_instance" "server" {
-  for_each                    = local.servers
-  ami                         = local.ami
-  instance_type               = local.instance_type
-  vpc_security_group_ids      = [local.security_group]
-  subnet_id                   = local.subnet
-  associate_public_ip_address = true
-  instance_initiated_shutdown_behavior = "terminate"
-  key_name                    = local.sshkey_name
-  user_data = <<-EOT
-  #cloud-config
-  users:
-    - default
-    - name: ${local.user}
-      gecos: ${local.user}
-      sudo: ALL=(ALL) NOPASSWD:ALL
-      groups: users, ${local.admin_group}
-      lock_password: false
-      ssh_authorized_keys:
-        - ${local.sshkey}
-  package_update: true
-  packages:
-    - jq
-    - tree
-  EOT
-
-  tags = {
-    Name  = each.key
-    User  = local.user
-    Use   = local.use
-    Owner = local.owner
-  }
-
-  root_block_device {
-    delete_on_termination = true
-    volume_size = 100
-  }
-
-  connection {
-    type        = "ssh"
-    user        = local.initial_user
-    script_path = "/home/${local.initial_user}/initial"
-    agent       = true
-    host        = self.public_ip
-  }
-
-  provisioner "remote-exec" {
-    inline = [<<-EOT
-      if [ -z $(which cloud-init) ]; then 
-        echo "cloud-init not found";
-        # check for user, if it doesn't exist generate it
-        if [ -z $(awk -F: '{ print $1 }' /etc/passwd | grep ${local.user}) ]; then 
-          sudo addgroup ${local.user}
-          sudo adduser -g "${local.user}" -s "/bin/sh" -G "${local.user}" -D ${local.user}
-          sudo addgroup ${local.user} ${local.admin_group}
-          sudo install -d -m 0700 /home/${local.user}/.ssh
-          sudo cp .ssh/authorized_keys /home/${local.user}/.ssh
-          sudo chown -R ${local.user}:${local.user} /home/${local.user}
-          sudo passwd ${local.user} -d '' -u
-        fi
-        exit 0;
-      fi
-
-      max_attempts=15
-      attempts=0
-      interval=5
-      while [ "$(sudo cloud-init status)" != "status: done" ]; do
-        echo "cloud init is \"$(sudo cloud-init status)\""
-        attempts=$(expr $attempts + 1)
-        if [ $attempts = $max_attempts ]; then break; fi
-        sleep $interval;
-      done
-    EOT
-    ]
-  }
+module "access" {
+  source        = "./access"
+  vpc           = local.vpc
+  internal_cidr = local.internal_cidr
+  owner         = local.owner
+  my_ip         = local.my_ip
+  ssh_key       = local.ssh_key
 }
 
-resource "null_resource" "script" {
+module "bastion_server" {
   depends_on = [
-    aws_instance.server,
+    module.access,
   ]
-  for_each = local.servers
-  connection {
-    type        = "ssh"
-    user        = local.user
-    script_path = "/home/${local.user}/script"
-    agent       = true
-    host        = aws_instance.server[each.key].public_ip
-  }
+  source            = "./server"
+  name              = "bastion"
+  instance_type     = local.instance_type
+  user              = local.user
+  owner             = local.owner
+  ssh_key           = local.ssh_key
+  image_name        = local.image_name
+  ssh_key_name      = module.access.ssh_key_name
+  security_group_id = module.access.bastion_security_group_id
+  subnet_id         = module.access.subnet_id
+  public_access     = true
+}
 
-  provisioner "file" {
-    content = local.script
-    destination = "/home/${local.user}/install_script.sh"
-  }
+module "bastion_script" {
+  depends_on = [
+    module.access,
+    module.bastion_server,
+  ]
+  source = "./script"
+  addr   = module.bastion_server.public_ip
+  user   = local.user
+  name   = "bastion"
+}
 
-  provisioner "remote-exec" {
-    inline = [<<-EOT
-      echo 'sudo -i' >> ~/.profile
-      sudo mv /home/${local.user}/install_script.sh /root/script.sh
-      sudo chmod +x /root/script.sh
-    EOT
-    ]
-  }
+module "initial_server" {
+  depends_on = [
+    module.bastion_server,
+    module.access,
+  ]
+  source            = "./server"
+  name              = local.names[0]
+  instance_type     = local.instance_type
+  user              = local.user
+  owner             = local.owner
+  ssh_key           = local.ssh_key
+  bastion_address   = module.bastion_server.public_ip
+  image_name        = local.image_name
+  ssh_key_name      = module.access.ssh_key_name
+  security_group_id = module.access.security_group_id
+  subnet_id         = module.access.subnet_id
+}
+
+module "initial_script" {
+  depends_on = [
+    module.access,
+    module.bastion_server,
+    module.initial_server,
+  ]
+  source          = "./script"
+  addr            = module.initial_server.private_ip
+  user            = local.user
+  name            = local.script
+  bastion_address = module.bastion_server.public_ip
+}
+
+module "subsequent_servers" {
+  depends_on = [
+    module.access,
+    module.bastion_server,
+    module.initial_server,
+  ]
+  source            = "./server"
+  for_each          = toset(slice(local.names,1,length(local.names)))
+  name              = each.key
+  instance_type     = local.instance_type
+  user              = local.user
+  owner             = local.owner
+  ssh_key           = local.ssh_key
+  bastion_address   = module.bastion_server.public_ip
+  image_name        = local.image_name
+  ssh_key_name      = module.access.ssh_key_name
+  security_group_id = module.access.security_group_id
+  subnet_id         = module.access.subnet_id
+}
+
+module "subsequent_script" {
+  depends_on = [
+    module.access,
+    module.bastion_server,
+    module.initial_server,
+    module.initial_script,
+    module.subsequent_servers,
+  ]
+  source          = "./script"
+  for_each        = module.subsequent_servers
+  addr            = each.value.private_ip
+  user            = local.user
+  initial         = module.initial_server.private_ip
+  name            = local.script
+  bastion_address = module.bastion_server.public_ip
 }

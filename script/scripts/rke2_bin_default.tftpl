@@ -29,8 +29,9 @@ debug: true
 EOF
 
 # subsequent nodes need IP from initial node
-#echo 'server: "https://<internal/private ip>:9345"' >> /etc/rancher/rke2/config.yaml
-
+%{ if server != "" }
+echo 'server: "https://${server}:9345"' >> /etc/rancher/rke2/config.yaml
+%{ endif }
 
 if [ ! -f "~/.profile" ]; then touch ~/.profile; fi
 echo '. /etc/rancher/rke2/envrc' >> ~/.profile
